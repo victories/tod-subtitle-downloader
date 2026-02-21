@@ -1247,44 +1247,6 @@
     const signal = AppState.batchAbortController.signal;
     EventBus.emit('processing:changed', true);
 
-    // Yüklenmemiş sezonları otomatik yükle
-    const unloadedSeasons = AppState.seasonsData
-      .map((s, i) => ({ idx: i, season: s }))
-      .filter(({ season }) => !Array.isArray(season.episodes) || season.episodes.length === 0);
-
-    if (unloadedSeasons.length > 0) {
-      log(`${unloadedSeasons.length} sezonun bölümleri yükleniyor...`);
-      showToast(`${unloadedSeasons.length} sezon yükleniyor...`, 'info');
-      EventBus.emit('progress:updated', { pct: 0, text: `Sezonlar yükleniyor (0/${unloadedSeasons.length})...`, show: true, current: 0, total: unloadedSeasons.length });
-
-      for (let li = 0; li < unloadedSeasons.length; li++) {
-        if (signal.aborted) break;
-        const { idx } = unloadedSeasons[li];
-        const sTitle = AppState.seasonsData[idx].title;
-        log(`  ${sTitle} yükleniyor...`);
-        EventBus.emit('progress:updated', {
-          pct: ((li) / unloadedSeasons.length) * 100,
-          text: `${sTitle} yükleniyor (${li + 1}/${unloadedSeasons.length})...`,
-          show: true, current: li + 1, total: unloadedSeasons.length,
-        });
-        const loaded = await loadSeasonEpisodes(idx);
-        if (!loaded) {
-          log(`  ${sTitle} bölümleri yüklenemedi, atlıyorum`);
-        }
-        await sleep(TIMING.RATE_LIMIT_DELAY);
-      }
-      log('Sezon yükleme tamamlandı');
-    }
-
-    if (signal.aborted) {
-      AppState.isProcessing = false;
-      AppState.batchAbortController = null;
-      EventBus.emit('processing:changed', false);
-      EventBus.emit('progress:updated', { pct: 0, text: '', show: false, current: 0, total: 0 });
-      createMenu();
-      return;
-    }
-
     const zip = new JSZip();
     let downloaded = 0, failed = 0, skipped = 0;
     const startTime = Date.now();
@@ -1789,33 +1751,36 @@
     // Tüm sezonları indir (BETA)
     if (AppState.seasonsData && AppState.seasonsData.length > 1) {
       const loadedCount = AppState.seasonsData.filter(s => Array.isArray(s.episodes) && s.episodes.length > 0).length;
-      const totalEps = AppState.seasonsData.reduce((sum, s) => sum + (Array.isArray(s.episodes) ? s.episodes.length : 0), 0);
-      const statusText = loadedCount === AppState.seasonsData.length
-        ? `${AppState.seasonsData.length} sezon, ${totalEps} bölüm`
-        : `${loadedCount}/${AppState.seasonsData.length} sezon yüklü`;
+      const allLoaded = loadedCount === AppState.seasonsData.length;
 
-      addSection(mainContent, `🌟 Tüm Sezonlar (${statusText})`);
+      if (allLoaded) {
+        const totalEps = AppState.seasonsData.reduce((sum, s) => sum + s.episodes.length, 0);
+        addSection(mainContent, `🌟 Tüm Sezonlar (${AppState.seasonsData.length} sezon, ${totalEps} bölüm)`);
 
-      ['tr', 'en', null].forEach(lang => {
-        const resumeKey = `batchResume_AllSeasons_${lang || 'all'}`;
-        const resumeData = Storage.get(resumeKey, { seasonIdx: 0, episodeIdx: 0 });
-        const hasResume = (resumeData.seasonIdx > 0 || resumeData.episodeIdx > 0);
-        const resumeInfo = hasResume ? ` (devam: S${resumeData.seasonIdx + 1}B${resumeData.episodeIdx + 1})` : '';
-        const langLabel = lang === 'tr' ? 'Türkçe' : lang === 'en' ? 'English' : 'Tüm Diller';
-        const color = lang === null ? 'red' : 'orange';
+        ['tr', 'en', null].forEach(lang => {
+          const resumeKey = `batchResume_AllSeasons_${lang || 'all'}`;
+          const resumeData = Storage.get(resumeKey, { seasonIdx: 0, episodeIdx: 0 });
+          const hasResume = (resumeData.seasonIdx > 0 || resumeData.episodeIdx > 0);
+          const resumeInfo = hasResume ? ` (devam: S${resumeData.seasonIdx + 1}B${resumeData.episodeIdx + 1})` : '';
+          const langLabel = lang === 'tr' ? 'Türkçe' : lang === 'en' ? 'English' : 'Tüm Diller';
+          const color = lang === null ? 'red' : 'orange';
 
-        const el = document.createElement('div');
-        el.className = `sd-action ${color}`;
-        if (isDisabled) el.classList.add('disabled');
-        el.innerHTML = `🚀 Tüm Sezonlar — ${langLabel}${resumeInfo} <span class="sd-beta-tag">BETA</span>`;
-        if (!isDisabled) {
-          el.addEventListener('click', () => {
-            document.querySelector(`#${MENU_ID} .sd-dropdown`)?.classList.remove('open');
-            batchDownloadAllSeasons(lang);
-          });
-        }
-        mainContent.appendChild(el);
-      });
+          const el = document.createElement('div');
+          el.className = `sd-action ${color}`;
+          if (isDisabled) el.classList.add('disabled');
+          el.innerHTML = `🚀 Tüm Sezonlar — ${langLabel}${resumeInfo} <span class="sd-beta-tag">BETA</span>`;
+          if (!isDisabled) {
+            el.addEventListener('click', () => {
+              document.querySelector(`#${MENU_ID} .sd-dropdown`)?.classList.remove('open');
+              batchDownloadAllSeasons(lang);
+            });
+          }
+          mainContent.appendChild(el);
+        });
+      } else {
+        addSection(mainContent, `🌟 Tüm Sezonlar`);
+        addInfo(mainContent, `Tüm sezonları tek seferde indirmek için önce yukarıdan her sezonun "Bölümleri Yükle" butonuna tıklayın. (${loadedCount}/${AppState.seasonsData.length} sezon yüklü)`);
+      }
     }
 
     // Log alanı
