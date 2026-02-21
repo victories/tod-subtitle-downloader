@@ -1608,7 +1608,6 @@
 
   function createMenu(opts) {
     const existing = document.getElementById(MENU_ID);
-    const wasOpen = existing?.querySelector('.sd-dropdown.open') !== null;
     if (existing) existing.remove();
 
     const container = document.createElement('div');
@@ -1798,7 +1797,7 @@
     });
 
     // Menü yeniden oluşturulurken açık kalsın
-    if (opts?.keepOpen || wasOpen) {
+    if (opts?.keepOpen) {
       dd.classList.add('open');
     }
 
