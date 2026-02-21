@@ -1606,8 +1606,9 @@
     return panel;
   }
 
-  function createMenu() {
+  function createMenu(opts) {
     const existing = document.getElementById(MENU_ID);
+    const wasOpen = existing?.querySelector('.sd-dropdown.open') !== null;
     if (existing) existing.remove();
 
     const container = document.createElement('div');
@@ -1722,12 +1723,12 @@
               log(`${season.title} bölümleri yükleniyor...`);
               const loaded = await loadSeasonEpisodes(idx);
               if (loaded) {
-                createMenu();
+                createMenu({ keepOpen: true });
               } else {
                 log('Bölümler yüklenemedi. Bir bölüm sayfasına gidip tekrar deneyin.');
                 showToast('Bölümler yüklenemedi', 'error');
               }
-            }, isDisabled);
+            }, isDisabled, true);
         } else {
           addSection(mainContent, `📁 ${season.title} (${epCount} bölüm)`);
 
@@ -1796,6 +1797,11 @@
       if (!container.contains(e.target)) dd.classList.remove('open');
     });
 
+    // Menü yeniden oluşturulurken açık kalsın
+    if (opts?.keepOpen || wasOpen) {
+      dd.classList.add('open');
+    }
+
     container.appendChild(btn);
     container.appendChild(dd);
     document.body.appendChild(container);
@@ -1821,14 +1827,16 @@
     parent.appendChild(el);
   }
 
-  function addAction(parent, text, color, onClick, disabled) {
+  function addAction(parent, text, color, onClick, disabled, keepOpen) {
     const el = document.createElement('div');
     el.className = `sd-action ${color}`;
     if (disabled) el.classList.add('disabled');
     el.textContent = text;
     if (!disabled) {
       el.addEventListener('click', () => {
-        document.querySelector(`#${MENU_ID} .sd-dropdown`)?.classList.remove('open');
+        if (!keepOpen) {
+          document.querySelector(`#${MENU_ID} .sd-dropdown`)?.classList.remove('open');
+        }
         onClick();
       });
     }
