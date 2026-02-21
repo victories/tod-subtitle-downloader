@@ -1271,7 +1271,7 @@
         if (!loaded) {
           log(`  ${sTitle} bölümleri yüklenemedi, atlıyorum`);
         }
-        await sleep(rateLimitDelay || TIMING.RATE_LIMIT_DELAY);
+        await sleep(TIMING.RATE_LIMIT_DELAY);
       }
       log('Sezon yükleme tamamlandı');
     }
