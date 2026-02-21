@@ -336,6 +336,15 @@
       background: #fff; color: #e50914; border-radius: 50%;
       padding: 1px 6px; margin-left: 6px; font-size: 11px;
     }
+    #${MENU_ID} .sd-badge-progress {
+      border-radius: 10px; padding: 2px 8px; font-weight: bold;
+      font-size: 12px; letter-spacing: 0.5px;
+      animation: sd-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes sd-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
     #${MENU_ID} .sd-dropdown {
       display: none; background: #1a1a1a; border: 1px solid #333;
       border-radius: 8px; margin-top: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
@@ -1093,7 +1102,7 @@
       showToast(`Bölüm ${resumeFrom + 1}'den devam ediliyor`, 'info');
     }
 
-    EventBus.emit('progress:updated', { pct: 0, text: 'Başlıyor...', show: true });
+    EventBus.emit('progress:updated', { pct: 0, text: 'Başlıyor...', show: true, current: resumeFrom, total: episodes.length });
     log(`${season.title} indirme başlıyor (${episodes.length} bölüm, bölüm ${resumeFrom + 1}'den)...`);
 
     for (let i = resumeFrom; i < episodes.length; i++) {
@@ -1128,6 +1137,8 @@
         pct: ((i - resumeFrom) / (episodes.length - resumeFrom)) * 100,
         text: `${i+1}/${episodes.length} ${etaText}`,
         show: true,
+        current: i + 1,
+        total: episodes.length,
       });
 
       log(`[${i+1}/${episodes.length}] ${epLabel} — ${ep.title}`);
@@ -1186,7 +1197,7 @@
 
     // ZIP oluştur
     if (downloaded > 0 && !signal.aborted) {
-      EventBus.emit('progress:updated', { pct: 100, text: 'ZIP oluşturuluyor...', show: true });
+      EventBus.emit('progress:updated', { pct: 100, text: 'ZIP oluşturuluyor...', show: true, current: episodes.length, total: episodes.length });
       log(`ZIP oluşturuluyor (${downloaded} altyazı)...`);
 
       const langSuffix = filterLang ? `.${getLangSafe(filterLang)}` : '.All.Languages';
@@ -1213,7 +1224,7 @@
     AppState.isProcessing = false;
     AppState.batchAbortController = null;
     EventBus.emit('processing:changed', false);
-    EventBus.emit('progress:updated', { pct: 0, text: '', show: false });
+    EventBus.emit('progress:updated', { pct: 0, text: '', show: false, current: 0, total: 0 });
     createMenu();
   }
 
@@ -1607,10 +1618,15 @@
     const mainBtn = document.querySelector(`#${MENU_ID} .sd-btn`);
     if (mainBtn) {
       mainBtn.classList.toggle('loading', isProcessing);
+      if (!isProcessing) {
+        // İşlem bitti — butonu eski haline döndür
+        const trackCount = AppState.currentTracks.length;
+        mainBtn.innerHTML = `🔤 Altyazı İndir${trackCount > 0 ? ` <span class="sd-badge">${trackCount}</span>` : ''}`;
+      }
     }
   });
 
-  EventBus.on('progress:updated', ({ pct, text, show }) => {
+  EventBus.on('progress:updated', ({ pct, text, show, current, total }) => {
     const bar = document.querySelector(`#${MENU_ID} .sd-progress-bar`);
     const container = document.querySelector(`#${MENU_ID} .sd-progress`);
     const textEl = document.querySelector(`#${MENU_ID} .sd-progress-text`);
@@ -1619,6 +1635,12 @@
     if (textEl) {
       textEl.style.display = (show && text) ? 'block' : 'none';
       textEl.textContent = text || '';
+    }
+
+    // Ana buton üzerinde ilerleme bilgisi göster
+    const mainBtn = document.querySelector(`#${MENU_ID} .sd-btn`);
+    if (mainBtn && show && total > 0) {
+      mainBtn.innerHTML = `🔤 <span class="sd-badge sd-badge-progress">${current}/${total}</span>`;
     }
   });
 
