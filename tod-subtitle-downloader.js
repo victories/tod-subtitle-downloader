@@ -345,6 +345,12 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.7; }
     }
+    #${MENU_ID} .sd-beta-tag {
+      background: #ff6b00; color: #fff; border-radius: 4px;
+      padding: 1px 5px; margin-left: 6px; font-size: 9px;
+      font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
     #${MENU_ID} .sd-dropdown {
       display: none; background: #1a1a1a; border: 1px solid #333;
       border-radius: 8px; margin-top: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
@@ -1228,6 +1234,199 @@
     createMenu();
   }
 
+  // --- Tüm Sezonları Toplu İndir (BETA) ---
+  async function batchDownloadAllSeasons(filterLang) {
+    if (AppState.isProcessing) {
+      showToast('Zaten bir indirme işlemi devam ediyor', 'info');
+      return;
+    }
+    if (!AppState.seasonsData || AppState.seasonsData.length === 0) return;
+
+    AppState.isProcessing = true;
+    AppState.batchAbortController = new AbortController();
+    const signal = AppState.batchAbortController.signal;
+    EventBus.emit('processing:changed', true);
+
+    const zip = new JSZip();
+    let downloaded = 0, failed = 0, skipped = 0;
+    const startTime = Date.now();
+    const fmt = Settings.get('defaultFormat') || 'srt';
+    const rateLimitDelay = Settings.get('rateLimitDelay') || TIMING.RATE_LIMIT_DELAY;
+
+    // Toplam bölüm sayısını hesapla
+    const totalEpisodes = AppState.seasonsData.reduce((sum, s) => {
+      return sum + (Array.isArray(s.episodes) ? s.episodes.length : 0);
+    }, 0);
+
+    if (totalEpisodes === 0) {
+      log('Hiçbir sezonda bölüm bulunamadı');
+      showToast('Bölüm listesi boş', 'error');
+      AppState.isProcessing = false;
+      AppState.batchAbortController = null;
+      EventBus.emit('processing:changed', false);
+      return;
+    }
+
+    // Resume desteği — sezon ve bölüm indeksi kaydet
+    const resumeKey = `batchResume_AllSeasons_${filterLang || 'all'}`;
+    const resumeData = Storage.get(resumeKey, { seasonIdx: 0, episodeIdx: 0 });
+    const resumeSeasonIdx = resumeData.seasonIdx || 0;
+    const resumeEpisodeIdx = resumeData.episodeIdx || 0;
+
+    if (resumeSeasonIdx > 0 || resumeEpisodeIdx > 0) {
+      log(`Önceki indirmeden devam: Sezon ${resumeSeasonIdx + 1}, Bölüm ${resumeEpisodeIdx + 1}`);
+      showToast(`S${resumeSeasonIdx + 1} B${resumeEpisodeIdx + 1}'den devam ediliyor`, 'info');
+    }
+
+    let globalCurrent = 0;
+    // Resume'dan önceki bölümleri atla (sayaç için)
+    for (let si = 0; si < resumeSeasonIdx; si++) {
+      const eps = AppState.seasonsData[si]?.episodes;
+      if (Array.isArray(eps)) globalCurrent += eps.length;
+    }
+    globalCurrent += resumeEpisodeIdx;
+
+    EventBus.emit('progress:updated', { pct: 0, text: 'Tüm sezonlar başlıyor...', show: true, current: globalCurrent, total: totalEpisodes });
+    log(`Tüm sezonlar indirme başlıyor (${AppState.seasonsData.length} sezon, ${totalEpisodes} bölüm)...`);
+
+    for (let sIdx = resumeSeasonIdx; sIdx < AppState.seasonsData.length; sIdx++) {
+      if (signal.aborted) break;
+
+      const season = AppState.seasonsData[sIdx];
+      const episodes = Array.isArray(season.episodes) ? season.episodes : [];
+
+      if (episodes.length === 0) {
+        log(`${season.title} — bölüm yok, atlıyorum`);
+        continue;
+      }
+
+      log(`\n--- ${season.title} (${episodes.length} bölüm) ---`);
+      const startEp = (sIdx === resumeSeasonIdx) ? resumeEpisodeIdx : 0;
+
+      for (let eIdx = startEp; eIdx < episodes.length; eIdx++) {
+        if (signal.aborted) {
+          Storage.set(resumeKey, { seasonIdx: sIdx, episodeIdx: eIdx });
+          log(`İptal edildi. S${sIdx + 1}B${eIdx + 1}'den devam edilebilir.`);
+          showToast(`İptal edildi. Bir dahaki sefere devam edilecek.`, 'info');
+          break;
+        }
+
+        globalCurrent++;
+        const ep = episodes[eIdx];
+        const epNum = String(ep.no).padStart(2, '0');
+        const epLabel = `S${String(season.no).padStart(2, '0')}E${epNum}`;
+
+        // Duplicate kontrolü
+        const historyKey = `${AppState.seriesName}.${epLabel}.${filterLang || 'all'}.allseasons`;
+        if (DownloadHistory.isDownloaded(historyKey)) {
+          log(`[${globalCurrent}/${totalEpisodes}] ${epLabel} — daha önce indirilmiş, atlıyorum`);
+          skipped++;
+          continue;
+        }
+
+        // ETA hesapla
+        const doneCount = globalCurrent - skipped;
+        const elapsed = Date.now() - startTime;
+        const avgPerEp = doneCount > 0 ? elapsed / doneCount : 0;
+        const remaining = (totalEpisodes - globalCurrent) * avgPerEp;
+        const etaText = doneCount > 0 ? formatETA(remaining) : '';
+
+        EventBus.emit('progress:updated', {
+          pct: (globalCurrent / totalEpisodes) * 100,
+          text: `${season.title} ${eIdx + 1}/${episodes.length} — ${globalCurrent}/${totalEpisodes} ${etaText}`,
+          show: true,
+          current: globalCurrent,
+          total: totalEpisodes,
+        });
+
+        log(`[${globalCurrent}/${totalEpisodes}] ${epLabel} — ${ep.title}`);
+
+        try {
+          const slug = ep.customData?.slug;
+          if (!slug) {
+            log(`  Slug yok, atlıyorum`);
+            failed++;
+            continue;
+          }
+
+          const asset = await fetchEpisodeAsset(slug, signal);
+          if (!asset) {
+            log(`  Asset bilgisi bulunamadı`);
+            failed++;
+            continue;
+          }
+
+          const tracks = await getSubtitlesForEpisode(asset, signal);
+          if (tracks.length === 0) {
+            log(`  Altyazı bulunamadı`);
+            failed++;
+            continue;
+          }
+
+          const targetTracks = filterLang ? tracks.filter(t => t.lang === filterLang) : tracks;
+
+          for (const track of targetTracks) {
+            try {
+              const resp = await gmFetchWithTimeout(track.url, { signal }, TIMING.GM_FETCH_TIMEOUT);
+              const vttText = resp.responseText;
+              const content = fmt === 'srt' ? vttToSrt(vttText) : vttText;
+              const filename = `${AppState.seriesName}.${epLabel}.${getLangSafe(track.lang)}.${fmt}`;
+              zip.file(filename, '\ufeff' + content);
+              downloaded++;
+              log(`  ✓ ${getLangName(track.lang)}`);
+            } catch (e) {
+              log(`  ✗ ${getLangName(track.lang)}: ${e.message}`);
+            }
+          }
+
+          DownloadHistory.mark(historyKey);
+
+        } catch (e) {
+          if (signal.aborted) break;
+          log(`  ✗ Hata: ${e.message}`);
+          failed++;
+        }
+
+        if (!signal.aborted) {
+          await sleep(rateLimitDelay);
+        }
+      }
+
+      if (signal.aborted) break;
+    }
+
+    // ZIP oluştur
+    if (downloaded > 0 && !signal.aborted) {
+      EventBus.emit('progress:updated', { pct: 100, text: 'ZIP oluşturuluyor...', show: true, current: totalEpisodes, total: totalEpisodes });
+      log(`\nZIP oluşturuluyor (${downloaded} altyazı)...`);
+
+      const langSuffix = filterLang ? `.${getLangSafe(filterLang)}` : '.All.Languages';
+      const zipName = `${AppState.seriesName}.AllSeasons${langSuffix}.${fmt}.zip`;
+
+      try {
+        const zipContent = await zip.generateAsync({ type: 'blob' });
+        saveAs(zipContent, zipName);
+        log(`✓ İndirme tamamlandı: ${zipName}`);
+        log(`  ${downloaded} başarılı, ${failed} başarısız, ${skipped} atlanmış`);
+        showToast(`${zipName} indirildi (${downloaded} altyazı)`, 'success');
+
+        Storage.remove(resumeKey);
+      } catch (e) {
+        log(`ZIP hatası: ${e.message}`);
+        showToast(`ZIP oluşturma hatası: ${e.message}`, 'error');
+      }
+    } else if (downloaded === 0 && !signal.aborted) {
+      log('Hiç altyazı indirilemedi');
+      showToast('Hiç altyazı indirilemedi', 'error');
+    }
+
+    AppState.isProcessing = false;
+    AppState.batchAbortController = null;
+    EventBus.emit('processing:changed', false);
+    EventBus.emit('progress:updated', { pct: 0, text: '', show: false, current: 0, total: 0 });
+    createMenu();
+  }
+
   // ============================================================
   // SECTION 11: UI COMPONENTS
   // ============================================================
@@ -1547,6 +1746,39 @@
       });
     } else {
       addInfo(mainContent, 'Sezon bilgisi bulunamadı. Dizinin bölüm sayfasında olduğunuzdan emin olun.');
+    }
+
+    // Tüm sezonları indir (BETA)
+    if (AppState.seasonsData && AppState.seasonsData.length > 1) {
+      const allSeasonsHaveEpisodes = AppState.seasonsData.every(
+        s => Array.isArray(s.episodes) && s.episodes.length > 0
+      );
+      if (allSeasonsHaveEpisodes) {
+        const totalEps = AppState.seasonsData.reduce((sum, s) => sum + s.episodes.length, 0);
+        addSection(mainContent, `🌟 Tüm Sezonlar (${AppState.seasonsData.length} sezon, ${totalEps} bölüm)`);
+
+        // Resume bilgisi
+        ['tr', 'en', null].forEach(lang => {
+          const resumeKey = `batchResume_AllSeasons_${lang || 'all'}`;
+          const resumeData = Storage.get(resumeKey, { seasonIdx: 0, episodeIdx: 0 });
+          const hasResume = (resumeData.seasonIdx > 0 || resumeData.episodeIdx > 0);
+          const resumeInfo = hasResume ? ` (devam: S${resumeData.seasonIdx + 1}B${resumeData.episodeIdx + 1})` : '';
+          const langLabel = lang === 'tr' ? 'Türkçe' : lang === 'en' ? 'English' : 'Tüm Diller';
+          const color = lang === null ? 'red' : 'orange';
+
+          const el = document.createElement('div');
+          el.className = `sd-action ${color}`;
+          if (isDisabled) el.classList.add('disabled');
+          el.innerHTML = `🚀 Tüm Sezonlar — ${langLabel}${resumeInfo} <span class="sd-beta-tag">BETA</span>`;
+          if (!isDisabled) {
+            el.addEventListener('click', () => {
+              document.querySelector(`#${MENU_ID} .sd-dropdown`)?.classList.remove('open');
+              batchDownloadAllSeasons(lang);
+            });
+          }
+          mainContent.appendChild(el);
+        });
+      }
     }
 
     // Log alanı
