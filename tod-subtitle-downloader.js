@@ -927,7 +927,7 @@
     const season = AppState.seasonsData[seasonIdx];
 
     // Cache kontrolü
-    const cacheKey = `season_${seasonIdx}_${season.no}`;
+    const cacheKey = `${AppState.seriesName}.season_${seasonIdx}_${season.no}`;
     const cached = Cache.get(cacheKey);
     if (cached) {
       AppState.seasonsData[seasonIdx] = cached;
@@ -1101,7 +1101,7 @@
     const rateLimitDelay = Settings.get('rateLimitDelay') || TIMING.RATE_LIMIT_DELAY;
 
     // Resume desteği
-    const resumeKey = `batchResume_S${season.no}_${filterLang || 'all'}`;
+    const resumeKey = `${AppState.seriesName}.batchResume_S${season.no}_${filterLang || 'all'}`;
     const resumeFrom = Storage.get(resumeKey, 0);
     if (resumeFrom > 0) {
       log(`Önceki indirmeden devam ediliyor: bölüm ${resumeFrom + 1}`);
@@ -1268,7 +1268,7 @@
     }
 
     // Resume desteği — sezon ve bölüm indeksi kaydet
-    const resumeKey = `batchResume_AllSeasons_${filterLang || 'all'}`;
+    const resumeKey = `${AppState.seriesName}.batchResume_AllSeasons_${filterLang || 'all'}`;
     const resumeData = Storage.get(resumeKey, { seasonIdx: 0, episodeIdx: 0 });
     const resumeSeasonIdx = resumeData.seasonIdx || 0;
     const resumeEpisodeIdx = resumeData.episodeIdx || 0;
@@ -1733,7 +1733,7 @@
           addSection(mainContent, `📁 ${season.title} (${epCount} bölüm)`);
 
           // Resume bilgisi varsa göster
-          const resumeKey = `batchResume_S${season.no}`;
+          const resumeKey = `${AppState.seriesName}.batchResume_S${season.no}`;
           ['tr', 'en', null].forEach(lang => {
             const fullResumeKey = `${resumeKey}_${lang || 'all'}`;
             const resumeIdx = Storage.get(fullResumeKey, 0);
@@ -1759,7 +1759,7 @@
         addSection(mainContent, `🌟 Tüm Sezonlar (${AppState.seasonsData.length} sezon, ${totalEps} bölüm)`);
 
         ['tr', 'en', null].forEach(lang => {
-          const resumeKey = `batchResume_AllSeasons_${lang || 'all'}`;
+          const resumeKey = `${AppState.seriesName}.batchResume_AllSeasons_${lang || 'all'}`;
           const resumeData = Storage.get(resumeKey, { seasonIdx: 0, episodeIdx: 0 });
           const hasResume = (resumeData.seasonIdx > 0 || resumeData.episodeIdx > 0);
           const resumeInfo = hasResume ? ` (devam: S${resumeData.seasonIdx + 1}B${resumeData.episodeIdx + 1})` : '';
